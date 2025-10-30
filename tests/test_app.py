@@ -26,3 +26,4 @@ def test_get_ports(client):
     assert response.status_code == 200
     assert isinstance(response.get_json(), dict)  # Теперь возвращает dict с пагинацией
     assert 'ports' in response.get_json()
+    
