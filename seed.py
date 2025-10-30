@@ -5,7 +5,6 @@ app = create_app()
 
 with app.app_context():
     # Очистка БД (опционально, для тестов)
-    db.drop_all()
     db.create_all()
     
     # Добавление пользователей
