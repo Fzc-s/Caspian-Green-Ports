@@ -10,13 +10,13 @@ import threading
 import tempfile
 import os
 
-api_bp = Blueprint('api', __name__)  # Исправлено: __name__
+api_bp = Blueprint('api', __name__)
 port_schema = PortSchema()
 ports_schema = PortSchema(many=True)
 report_schema = ReportSchema()
 login_schema = LoginSchema()
 
-# Функция для уведомлений (асинхронно)
+# Функция для уведомлений
 def send_notification_async(port, message):
     def send():
         if port.subscribers:
@@ -26,7 +26,7 @@ def send_notification_async(port, message):
             mail.send(msg)
     threading.Thread(target=send).start()
 
-# Логин (возвращает JWT)
+# Логин
 @api_bp.route('/login', methods=['POST'])
 def login():
     data = request.get_json()
@@ -36,32 +36,24 @@ def login():
     
     user = User.query.filter_by(username=data['username']).first()
     if user and user.check_password(data['password']):
-        access_token = create_access_token(identity=user.id)
+        access_token = create_access_token(identity=str(user.id))
         return jsonify(access_token=access_token, role=user.role), 200
     return jsonify({'error': 'Invalid credentials'}), 401
 
-# Публичные маршруты (GET без JWT) — улучшены для адаптивности
+# Порты (GET с фильтрами)
 @api_bp.route('/ports', methods=['GET'])
 def get_ports():
-    # Добавлены фильтры, сортировка и пагинация для веб-приложения
     query = Port.query
-    
-    # Фильтр по min_score убран (невозможно в SQL, так как green_score — property)
-    # Вместо этого фильтр применяется после загрузки
-    
-    # Сортировка (например, ?sort=green_score&order=desc)
     sort_by = request.args.get('sort', 'name')
     order = request.args.get('order', 'asc')
     if sort_by in ['name', 'air_quality', 'water_quality', 'co2_emissions', 'incidents']:
         column = getattr(Port, sort_by)
         query = query.order_by(column.desc() if order == 'desc' else column.asc())
     elif sort_by == 'green_score':
-        # Сортировка по green_score: загрузим и отсортируем в Python
         ports_list = query.all()
         ports_list.sort(key=lambda p: p.green_score, reverse=(order == 'desc'))
-        query = ports_list  # Теперь это список
+        query = ports_list
     
-    # Пагинация
     if isinstance(query, list):
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 10, type=int)
@@ -80,7 +72,6 @@ def get_ports():
         pages = ports.pages
         current_page = ports.page
     
-    # Фильтр по min_score (применяем после загрузки)
     min_score = request.args.get('min_score', type=float)
     if min_score is not None:
         paginated_items = [p for p in paginated_items if p.green_score >= min_score]
@@ -92,18 +83,29 @@ def get_ports():
         'current_page': current_page
     })
 
-@api_bp.route('/ports/<int:port_id>', methods=['GET'])  # Исправлено: <int:port_id>
+# Конкретный порт
+@api_bp.route('/ports/<int:port_id>', methods=['GET'])
 def get_port(port_id):
     port = Port.query.get_or_404(port_id)
     return jsonify(port_schema.dump(port))
 
-# Новый эндпоинт: Статистика для графиков (адаптивно для frontend)
+# Статистика портов
 @api_bp.route('/ports/stats', methods=['GET'])
 def get_ports_stats():
     ports = Port.query.all()
+    if not ports:
+        return jsonify({
+            'total_ports': 0,
+            'avg_green_score': 0,
+            'top_polluted': [],
+            'air_quality_trend': [],
+            'water_quality_trend': [],
+            'co2_trend': [],
+            'incidents_trend': []
+        })
     stats = {
         'total_ports': len(ports),
-        'avg_green_score': round(sum(p.green_score for p in ports) / len(ports), 2) if ports else 0,
+        'avg_green_score': round(sum(p.green_score for p in ports) / len(ports), 2),
         'top_polluted': [{'name': p.name, 'score': p.green_score} for p in sorted(ports, key=lambda x: x.green_score)[:5]],
         'air_quality_trend': [p.air_quality for p in ports],
         'water_quality_trend': [p.water_quality for p in ports],
@@ -122,16 +124,20 @@ def create_port():
         return jsonify({'error': 'Access denied'}), 403
     
     data = request.get_json()
-    errors = port_schema.validate(data)
+    errors = port_schema.validate(data)  # Добавлено
     if errors:
         return jsonify(errors), 400
     
-    new_port = Port(**data)
-    db.session.add(new_port)
-    db.session.commit()
-    return jsonify(port_schema.dump(new_port)), 201
+    try:
+        new_port = Port(**data)
+        db.session.add(new_port)
+        db.session.commit()
+        return jsonify(port_schema.dump(new_port)), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create port', 'details': str(e)}), 500
 
-@api_bp.route('/ports/<int:port_id>', methods=['PUT'])  # Исправлено: <int:port_id>
+@api_bp.route('/ports/<int:port_id>', methods=['PUT'])
 @jwt_required()
 def update_port(port_id):
     current_user_id = get_jwt_identity()
@@ -143,19 +149,20 @@ def update_port(port_id):
     data = request.get_json()
     errors = port_schema.validate(data, partial=True)
     if errors:
-        return jsonify(errors), 400
+        return jsonify(errors), 400  # Изменено на 400
     
-    for key, value in data.items():
-        setattr(port, key, value)
-    db.session.commit()
-    
-    # Уведомления при превышениях
-    if port.air_quality > 50 or port.water_quality > 30:
-        send_notification_async(port, f'Alert: High pollution in {port.name}')
-    
-    return jsonify(port_schema.dump(port))
+    try:
+        for key, value in data.items():
+            setattr(port, key, value)
+        db.session.commit()
+        if port.air_quality > 50 or port.water_quality > 30:
+            send_notification_async(port, f'Alert: High pollution in {port.name}')
+        return jsonify(port_schema.dump(port))
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update port', 'details': str(e)}), 500
 
-@api_bp.route('/ports/<int:port_id>', methods=['DELETE'])  # Исправлено: <int:port_id>
+@api_bp.route('/ports/<int:port_id>', methods=['DELETE'])
 @jwt_required()
 def delete_port(port_id):
     current_user_id = get_jwt_identity()
@@ -163,13 +170,18 @@ def delete_port(port_id):
     if user.role != 'admin':
         return jsonify({'error': 'Access denied'}), 403
     
+    
     port = Port.query.get_or_404(port_id)
-    db.session.delete(port)
-    db.session.commit()
-    return jsonify({'message': 'Port deleted'})
+    try:
+        db.session.delete(port)
+        db.session.commit()
+        return jsonify({'message': 'Port deleted'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete port', 'details': str(e)}), 500
 
-# Загрузка отчёта
-@api_bp.route('/ports/<int:port_id>/upload_report', methods=['POST'])  # Исправлено: <int:port_id>
+# Загрузка отчета
+@api_bp.route('/ports/<int:port_id>/upload_report', methods=['POST'])
 @jwt_required()
 def upload_report(port_id):
     current_user_id = get_jwt_identity()
@@ -182,8 +194,6 @@ def upload_report(port_id):
         return jsonify({'error': 'Invalid file'}), 400
     
     port = Port.query.get_or_404(port_id)
-    
-    # Временное сохранение файла для pdfplumber
     with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
         file.save(temp_file.name)
         temp_path = temp_file.name
@@ -192,39 +202,53 @@ def upload_report(port_id):
         with pdfplumber.open(temp_path) as pdf:
             text = ''.join(page.extract_text() for page in pdf.pages)
         
-        # Гибкий парсинг
         patterns = {
             'air_quality': r'air\s*quality[:\s]*(\d+\.?\d*)',
             'water_quality': r'water\s*quality[:\s]*(\d+\.?\d*)',
             'co2_emissions': r'co2\s*emissions?[:\s]*(\d+\.?\d*)',
             'incidents': r'incidents?[:\s]*(\d+)'
         }
+        updated_fields = []
         for field, pattern in patterns.items():
             match = re.search(pattern, text, re.IGNORECASE)
             if match:
                 value = float(match.group(1)) if '.' in match.group(1) else int(match.group(1))
                 setattr(port, field, value)
+                updated_fields.append(field)
+        
+        if not updated_fields:
+            return jsonify({'error': 'No matching data found in PDF'}), 400
         
         db.session.commit()
-        return jsonify({'message': 'Report parsed and updated'})
+        return jsonify({'message': f'Report parsed and updated fields: {", ".join(updated_fields)}'})
+    except Exception as e:
+        return jsonify({'error': 'Failed to parse PDF', 'details': str(e)}), 500
     finally:
         os.unlink(temp_path)
 
 # Подписка
-@api_bp.route('/ports/<int:port_id>/subscribe', methods=['POST'])  # Исправлено: <int:port_id>
+@api_bp.route('/ports/<int:port_id>/subscribe', methods=['POST'])
 def subscribe(port_id):
     data = request.get_json()
     email = data.get('email')
-    if not email:
-        return jsonify({'error': 'Email required'}), 400
+    if not email or '@' not in email or '.' not in email:
+        return jsonify({'error': 'Invalid email'}), 400
     
     port = Port.query.get_or_404(port_id)
-    if email not in port.subscribers:
-        port.subscribers += f',{email}' if port.subscribers else email
+    subscribers_list = port.subscribers.split(',') if port.subscribers else []
+    if email in subscribers_list:
+        return jsonify({'message': 'Already subscribed'}), 200
+    
+    subscribers_list.append(email)
+    port.subscribers = ','.join(subscribers_list)
+    try:
         db.session.commit()
-    return jsonify({'message': 'Subscribed'})
+        return jsonify({'message': 'Subscribed'})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to subscribe', 'details': str(e)}), 500
 
-# Отчёты от граждан
+# Отчеты
 @api_bp.route('/reports', methods=['POST'])
 def create_report():
     data = request.get_json()
@@ -232,7 +256,27 @@ def create_report():
     if errors:
         return jsonify(errors), 400
     
-    new_report = Report(**data)
-    db.session.add(new_report)
-    db.session.commit()
-    return jsonify(report_schema.dump(new_report)), 201
+    port = Port.query.get(data['port_id'])
+    if not port:
+        return jsonify({'error': 'Port not found'}), 404
+    
+    try:
+        new_report = Report(**data)
+        db.session.add(new_report)
+        db.session.commit()
+        return jsonify(report_schema.dump(new_report)), 201
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create report', 'details': str(e)}), 500
+
+# Получение отчетов (для админов)
+@api_bp.route('/reports', methods=['GET'])
+@jwt_required()
+def get_reports():
+    current_user_id = get_jwt_identity()
+    user = User.query.get(current_user_id)
+    if user.role != 'admin':
+        return jsonify({'error': 'Access denied'}), 403
+    
+    reports = Report.query.all()
+    return jsonify(report_schema.dump(reports, many=True))
