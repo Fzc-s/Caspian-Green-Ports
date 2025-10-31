@@ -1,9 +1,8 @@
-from app import create_app, db
+# seed.py
+from app import db
 from app.models import User, Port, Report
 
-app = create_app()
-
-with app.app_context():
+def seed_database():
     # Очистка БД (опционально, для тестов)
     db.create_all()
     
