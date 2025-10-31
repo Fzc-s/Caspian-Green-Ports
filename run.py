@@ -6,8 +6,7 @@ from seed import seed_database  # Импорт функции seed из сосе
 app = create_app()
 
 with app.app_context():
-    if not User.query.first():
-        seed_database()  # Запуск seed-кода из seed.py
+    seed_database()  # Запуск seed-кода из seed.py при каждом запуске
 
 if __name__ == '__main__':
     app.run()

@@ -6,33 +6,36 @@ def seed_database():
     # Очистка БД (опционально, для тестов)
     db.create_all()
     
-    # Добавление пользователей (расширено)
-    admin = User()
-    admin.username = 'admin'
-    admin.role = 'admin'
-    admin.set_password('adminpass')
-    db.session.add(admin)
+    # Добавление пользователей (расширено) с проверками на дубликаты
+    if not User.query.filter_by(username='admin').first():
+        admin = User()
+        admin.username = 'admin'
+        admin.role = 'admin'
+        admin.set_password('adminpass')
+        db.session.add(admin)
     
-    user = User()
-    user.username = 'user'
-    user.role = 'user'
-    user.set_password('userpass')
-    db.session.add(user)
+    if not User.query.filter_by(username='user').first():
+        user = User()
+        user.username = 'user'
+        user.role = 'user'
+        user.set_password('userpass')
+        db.session.add(user)
     
-    # Дополнительные пользователи
-    user2 = User()
-    user2.username = 'moderator'
-    user2.role = 'user'
-    user2.set_password('modpass')
-    db.session.add(user2)
+    if not User.query.filter_by(username='moderator').first():
+        user2 = User()
+        user2.username = 'moderator'
+        user2.role = 'user'
+        user2.set_password('modpass')
+        db.session.add(user2)
     
-    user3 = User()
-    user3.username = 'citizen'
-    user3.role = 'user'
-    user3.set_password('citizenpass')
-    db.session.add(user3)
+    if not User.query.filter_by(username='citizen').first():
+        user3 = User()
+        user3.username = 'citizen'
+        user3.role = 'user'
+        user3.set_password('citizenpass')
+        db.session.add(user3)
     
-    # Добавление портов (расширено до 10 портов Каспия)
+    # Добавление портов (расширено до 10 портов Каспия) с проверками на дубликаты
     ports_data = [
         {'name': 'Port of Baku', 'lat': 40.37, 'lng': 49.89, 'air_quality': 45.0, 'water_quality': 25.0, 'co2_emissions': 800.0, 'incidents': 3},
         {'name': 'Port of Aktau', 'lat': 43.65, 'lng': 51.16, 'air_quality': 50.0, 'water_quality': 30.0, 'co2_emissions': 600.0, 'incidents': 2},
@@ -46,10 +49,11 @@ def seed_database():
         {'name': 'Port of Lagan', 'lat': 45.40, 'lng': 47.35, 'air_quality': 38.0, 'water_quality': 18.0, 'co2_emissions': 450.0, 'incidents': 0},
     ]
     for port_data in ports_data:
-        port = Port(**port_data)
-        db.session.add(port)
+        if not Port.query.filter_by(name=port_data['name']).first():
+            port = Port(**port_data)
+            db.session.add(port)
     
-    # Добавление отчётов (расширено до 10 отчетов)
+    # Добавление отчётов (расширено до 10 отчетов) с проверками на дубликаты
     reports_data = [
         {'port_id': 1, 'user_email': 'citizen@example.com', 'description': 'High pollution in Baku port area.'},
         {'port_id': 2, 'user_email': 'sailor@example.com', 'description': 'Oil spill observed near Aktau.'},
@@ -63,8 +67,9 @@ def seed_database():
         {'port_id': 10, 'user_email': 'scientist@example.com', 'description': 'Low pollution levels in Lagan.'},
     ]
     for report_data in reports_data:
-        report = Report(**report_data)
-        db.session.add(report)
+        if not Report.query.filter_by(port_id=report_data['port_id'], description=report_data['description']).first():
+            report = Report(**report_data)
+            db.session.add(report)
     
     db.session.commit()
     print("Расширенные данные успешно добавлены!")
