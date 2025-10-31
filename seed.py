@@ -1,12 +1,16 @@
-# seed.py
+from flask import Blueprint
 from app import db
 from app.models import User, Port, Report
 
+seed_bp = Blueprint('seed', __name__)
+
+@seed_bp.cli.command('run')
+def run_seed():
+    seed_database()
+
 def seed_database():
-    # Очистка БД (опционально, для тестов)
-    db.create_all()
-    
-    # Добавление пользователей (расширено) с проверками на дубликаты
+    # Убрали db.create_all() — используйте миграции
+    # Добавление пользователей с проверками
     if not User.query.filter_by(username='admin').first():
         admin = User()
         admin.username = 'admin'
@@ -35,7 +39,7 @@ def seed_database():
         user3.set_password('citizenpass')
         db.session.add(user3)
     
-    # Добавление портов (расширено до 10 портов Каспия) с проверками на дубликаты
+    # Порты
     ports_data = [
         {'name': 'Port of Baku', 'lat': 40.37, 'lng': 49.89, 'air_quality': 45.0, 'water_quality': 25.0, 'co2_emissions': 800.0, 'incidents': 3},
         {'name': 'Port of Aktau', 'lat': 43.65, 'lng': 51.16, 'air_quality': 50.0, 'water_quality': 30.0, 'co2_emissions': 600.0, 'incidents': 2},
@@ -53,7 +57,7 @@ def seed_database():
             port = Port(**port_data)
             db.session.add(port)
     
-    # Добавление отчётов (расширено до 10 отчетов) с проверками на дубликаты
+    # Отчеты
     reports_data = [
         {'port_id': 1, 'user_email': 'citizen@example.com', 'description': 'High pollution in Baku port area.'},
         {'port_id': 2, 'user_email': 'sailor@example.com', 'description': 'Oil spill observed near Aktau.'},
@@ -72,4 +76,4 @@ def seed_database():
             db.session.add(report)
     
     db.session.commit()
-    print("Расширенные данные успешно добавлены!")
+    print("Seed completed!")

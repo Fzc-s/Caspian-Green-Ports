@@ -28,6 +28,9 @@ def create_app(config_class=Config):
     # Регистрация blueprints
     from app.routes import api_bp  # Явный импорт для линтера
     app.register_blueprint(api_bp, url_prefix='/api')
+    # Изменено: импорт из корня проекта
+    from seed import seed_bp  # Импорт seed blueprint из корня
+    app.register_blueprint(seed_bp)
     
     # Глобальные обработчики ошибок
     @app.errorhandler(404)
